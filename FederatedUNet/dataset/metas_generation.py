@@ -25,6 +25,6 @@ def main():
         partial_meta['id'] = partial_meta.index
         partial_meta.drop('class', axis=1, inplace=True)
         partial_meta.to_csv(os.path.join(args.save_path, 'meta_' + img_class + '.csv'), index=False)
-
+    # meta.to_csv(args.save_path, index=False)
 if __name__ == '__main__':
     main()
