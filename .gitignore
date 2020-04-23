@@ -1,1 +1,9 @@
-FederatedUNet/meta_*
+FederatedUNet/dataset/metas
+__pycache__/*
+*/__pycache__/*
+*/*/*/__pycache__/*
+*/*/__pycache__/*
+.idea
+*/.idea
+*/*/.idea
+FederatedUNet/runs

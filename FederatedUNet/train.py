@@ -8,16 +8,18 @@ import copy
 import time
 import numpy as np
 from tqdm import tqdm
-import sys
 import torch
+from torch.utils.tensorboard import SummaryWriter
+import sys
 sys.path.append('/nmnt/media/home/alex_samoylenko/Federated/FederatedUNet/FederatedUNet')
+from matplotlib import pyplot as plt
 
 from dataset.resources import get_datasets
 from model.model import UNet
 from updateWeights.update import LocalUpdate, average_weights
 if __name__ == '__main__':
     epochs = 10
-
+    writer = SummaryWriter('runs/ex2')
     start_time = time.time()
 
     torch.cuda.set_device(0)
@@ -25,7 +27,6 @@ if __name__ == '__main__':
 
     # load datasets
     datasets = get_datasets()
-
     # BUILD MODEL
     global_model = UNet(n_channels=1, n_classes=1).float()
 
@@ -48,13 +49,14 @@ if __name__ == '__main__':
         print(f'\n | Global Training Round : {epoch+1} |\n')
 
         global_model.train()
-
+        local_train_losses_epoch = []
         for idx, dataset in enumerate(datasets):
-            local_model = LocalUpdate(dataset=dataset)
+            local_model = LocalUpdate(dataset=dataset, writer=writer)
             w, loss = local_model.update_weights(model=copy.deepcopy(global_model), global_round=epoch)
             local_weights.append(copy.deepcopy(w))
             local_losses.append(copy.deepcopy(loss))
-
+            local_train_losses_epoch.append(copy.deepcopy(loss))
+        writer.add_scalars('epoch_train_losses', {datasets[i].class_name(): local_train_losses_epoch[i] for i in range(len(local_train_losses_epoch))})
         # update global weights
         global_weights = average_weights(local_weights)
 
@@ -64,16 +66,16 @@ if __name__ == '__main__':
     #     loss_avg = sum(local_losses) / len(local_losses)
     #     train_loss.append(loss_avg)
     #
-    #     # Calculate avg training accuracy over all users at every epoch
-    #     # list_acc, list_loss = [], []
-    #     # global_model.eval()
-    #     # for dataset in datasets:
-    #     #     local_model = LocalUpdate(args=args, dataset=train_dataset,
-    #     #                               idxs=user_groups[idx], logger=logger)
-    #     #     acc, loss = local_model.inference(model=global_model)
-    #     #     list_acc.append(acc)
-    #     #     list_loss.append(loss)
-    #     # train_accuracy.append(sum(list_acc)/len(list_acc))
+        # Calculate avg training accuracy over all users at every epoch
+        local_val_losses_epoch = []
+        global_model.eval()
+        for dataset in datasets:
+            local_model = LocalUpdate(dataset=dataset)
+            loss = local_model.inference(model=global_model)
+            local_val_losses_epoch.append(loss)
+        writer.add_scalars('epoch_val_losses', {datasets[i].class_name(): local_val_losses_epoch[i] for i in range(len(local_val_losses_epoch))})
+
+    writer.close()
     #
     #     # print global training loss after every 'i' rounds
     #     if (epoch+1) % print_every == 0:

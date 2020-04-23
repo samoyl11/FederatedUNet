@@ -5,6 +5,9 @@ from dpipe.batch_iter import Infinite, load_by_random_id
 from dpipe.batch_iter.utils import unpack_args
 import numpy as np
 import copy
+import sys
+sys.path.append('/nmnt/media/home/alex_samoylenko/Federated/FederatedUNet')
+from FederatedUNet.updateWeights.resources import *
 
 class DatasetSplit(Dataset):
     """An abstract Dataset class wrapped around Pytorch Dataset class.
@@ -22,15 +25,15 @@ class DatasetSplit(Dataset):
         return torch.tensor(image), torch.tensor(label)
 
 class LocalUpdate:
-    def __init__(self, dataset):
+    def __init__(self, dataset, writer):
         self.n_samples_per_epoch = 4
         self.local_lr = 1e-3
         self.local_epochs = 10
         self.local_bs = 2
         self.device = 'cuda'
         self.trainloader, self.validloader = self.train_val(dataset)
-
-        print('init')
+        self.writer = writer
+        self.class_name = dataset.class_name()
         # optimizer and criterion
         self.criterion = nn.BCEWithLogitsLoss().to(self.device)
 
@@ -48,7 +51,7 @@ class LocalUpdate:
                 unpack_args(get_slice),
                 batches_per_epoch=max(self.n_samples_per_epoch//self.local_bs,1), batch_size=self.local_bs)
         val_loader = Infinite(
-            load_by_random_id(dataset.load_x, dataset.load_y, ids=idxs_train),
+            load_by_random_id(dataset.load_x, dataset.load_y, ids=idxs_val),
             unpack_args(get_slice),
             batches_per_epoch=max(self.n_samples_per_epoch // self.local_bs, 1), batch_size=self.local_bs)
         return train_loader, val_loader
@@ -64,43 +67,39 @@ class LocalUpdate:
         for iter in range(self.local_epochs):
             batch_loss = []
             for batch_idx, (images, targets) in enumerate(self.trainloader()):
-                print(images[0].dtype)
+                # for img, target in zip(images, targets):
+                #     self.writer.add_image(f'img_{self.class_name}', img)
+                #     self.writer.add_image(f'target_{self.class_name}', target)
                 images, targets = torch.tensor(images), torch.tensor(targets)
-                images, targets = images.float(), targets.float()
+                images, targets = images, targets.float()
                 images, targets = images.to(self.device), targets.to(self.device)
-
                 model.zero_grad()
                 log_probs = model(images)
                 loss = self.criterion(log_probs, targets)
+
                 loss.backward()
                 optimizer.step()
-
+                self.writer.add_figure(f'predictions vs. actuals, {self.class_name}', visualize_preds(images[0][0].cpu().detach().numpy(),
+                                                            log_probs[0][0].cpu().detach().numpy(), targets[0][0].cpu().detach().numpy()))
                 batch_loss.append(loss.item())
-
             epoch_loss.append(sum(batch_loss)/len(batch_loss))
 
         return model.state_dict(), sum(epoch_loss) / len(epoch_loss)
 
+    def inference(self, model):
+        """ Returns the inference loss.
+        """
+        model.eval()
+        inf_losses = []
 
+        for batch_idx, (images, labels) in enumerate(self.validloader):
+            images, targets = torch.tensor(images), torch.tensor(targets)
+            images, targets = images, targets.float()
+            images, targets = images.to(self.device), targets.to(self.device)
 
-def get_slice(*inputs):
-    img, target = inputs
-    # masked = ((x < 0).sum(axis=-2).sum(axis=-2) != 0)
-    # to_decide = np.nonzero(masked)[0]
-    _id = np.random.choice(img.shape[-1])
+            # Inference
+            outputs = model(images)
+            batch_loss = self.criterion(outputs, labels)
+            inf_losses.append(batch_loss.item())
 
-    #     print("X: ", x[:, _id, ...].shape, _id)
-    #     print("M: ", m[:, _id, ...].shape, _id)
-    return [[img[..., _id]], [target[..., _id]]]
-
-
-def average_weights(w):
-    """
-    Returns the average of the weights.
-    """
-    w_avg = copy.deepcopy(w[0])
-    for key in w_avg.keys():
-        for i in range(1, len(w)):
-            w_avg[key] += w[i][key]
-        w_avg[key] = torch.div(w_avg[key], len(w))
-    return w_avg
+        return sum(inf_losses) / len(inf_losses)
