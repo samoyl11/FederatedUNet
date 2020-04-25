@@ -12,7 +12,7 @@ def img_target_show(img, target):
 
 
 def visualize_preds(img, pred, target):
-    fig = plt.figure(figsize=(24, 8))
+    fig = plt.figure(figsize=(12, 4))
     plt.subplot(131)
     plt.imshow(img)
     plt.subplot(132)
@@ -20,12 +20,6 @@ def visualize_preds(img, pred, target):
     plt.subplot(133)
     plt.imshow(target)
     return fig
-
-def get_slice(*inputs):
-    img, target = inputs
-    _id = np.random.choice(img.shape[-1])
-
-    return [[img[..., _id]], [target[..., _id]]]
 
 
 def average_weights(w):

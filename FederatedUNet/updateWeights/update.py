@@ -1,13 +1,12 @@
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset
 from torch import nn
-import torch
 from dpipe.batch_iter import Infinite, load_by_random_id
 from dpipe.batch_iter.utils import unpack_args
-import numpy as np
-import copy
 import sys
 sys.path.append('/nmnt/media/home/alex_samoylenko/Federated/FederatedUNet')
 from FederatedUNet.updateWeights.resources import *
+from FederatedUNet.dataset.resources import get_random_slice
+import os
 
 class DatasetSplit(Dataset):
     """An abstract Dataset class wrapped around Pytorch Dataset class.
@@ -24,82 +23,78 @@ class DatasetSplit(Dataset):
         image, label = self.dataset[self.idxs[item]]
         return torch.tensor(image), torch.tensor(label)
 
+
 class LocalUpdate:
-    def __init__(self, dataset, writer):
-        self.n_samples_per_epoch = 4
-        self.local_lr = 1e-3
-        self.local_epochs = 10
-        self.local_bs = 2
+    def __init__(self, dataset, writer, args):
+        self.args = args
         self.device = 'cuda'
-        self.trainloader, self.validloader = self.train_val(dataset)
         self.writer = writer
         self.class_name = dataset.class_name()
-        # optimizer and criterion
+        self.dataset = dataset
+
+        # criterion
         self.criterion = nn.BCEWithLogitsLoss().to(self.device)
 
-    def train_val(self, dataset):
-        """
-        Returns train, validation and test dataloaders for a given dataset
-        """
-        # split indexes for train, validation, and test (80, 10, 10)
-        idxs = list(range(dataset.len()))
-        idxs_train = idxs[:int(0.9 * len(idxs))]
-        idxs_val = idxs[int(0.9 * len(idxs)):]
-
-        train_loader = Infinite(
-                load_by_random_id(dataset.load_x, dataset.load_y, ids=idxs_train),
-                unpack_args(get_slice),
-                batches_per_epoch=max(self.n_samples_per_epoch//self.local_bs,1), batch_size=self.local_bs)
-        val_loader = Infinite(
-            load_by_random_id(dataset.load_x, dataset.load_y, ids=idxs_val),
-            unpack_args(get_slice),
-            batches_per_epoch=max(self.n_samples_per_epoch // self.local_bs, 1), batch_size=self.local_bs)
-        return train_loader, val_loader
-
-    def update_weights(self, model, global_round):
+    def train(self, model, train_idxs, local_lr, global_round):
+        model = copy.deepcopy(model)
+        print(f'LR: {local_lr}, ROUND: {global_round}')
         # Set mode to train model
         model.train()
         epoch_loss = []
 
         # Set optimizer for the local updates
-        optimizer = torch.optim.Adam(model.parameters(), lr=self.local_lr, weight_decay=1e-4)
+        optimizer = torch.optim.Adam(model.parameters(), lr=local_lr, weight_decay=1e-4)
 
-        for iter in range(self.local_epochs):
+        trainloader = Infinite(
+            load_by_random_id(self.dataset.load_x, self.dataset.load_y, ids=train_idxs),
+            unpack_args(get_random_slice),
+            batches_per_epoch=max(self.args.n_samples_per_epoch // self.args.local_bs, 1),
+            batch_size=self.args.local_bs)
+
+        for _ in range(self.args.local_epochs):
             batch_loss = []
-            for batch_idx, (images, targets) in enumerate(self.trainloader()):
-                # for img, target in zip(images, targets):
-                #     self.writer.add_image(f'img_{self.class_name}', img)
-                #     self.writer.add_image(f'target_{self.class_name}', target)
-                images, targets = torch.tensor(images), torch.tensor(targets)
-                images, targets = images, targets.float()
-                images, targets = images.to(self.device), targets.to(self.device)
-                model.zero_grad()
-                log_probs = model(images)
-                loss = self.criterion(log_probs, targets)
+            for batch_idx, (image_slices, target_slices) in enumerate(trainloader()):
+                image_slices, target_slices = torch.tensor(image_slices), torch.tensor(target_slices)
+                image_slices, target_slices = image_slices, target_slices.float()
+                image_slices, target_slices = image_slices.to(self.device), target_slices.to(self.device)
 
+                model.zero_grad()
+                log_probs = model(image_slices)  # predictions
+                loss = self.criterion(log_probs, target_slices)
                 loss.backward()
                 optimizer.step()
-                self.writer.add_figure(f'predictions vs. actuals, {self.class_name}', visualize_preds(images[0][0].cpu().detach().numpy(),
-                                                            log_probs[0][0].cpu().detach().numpy(), targets[0][0].cpu().detach().numpy()))
                 batch_loss.append(loss.item())
+
             epoch_loss.append(sum(batch_loss)/len(batch_loss))
 
+        if global_round % self.args.show_every == 0:
+            self.writer.add_figure(f'Training data: Input vs Prediction vs Target, {self.class_name}',  # visualize after last epoch
+                                   visualize_preds(image_slices[0][0].cpu().detach().numpy(),
+                                                   log_probs[0][0].cpu().detach().numpy(),
+                                                   target_slices[0][0].cpu().detach().numpy()), global_step=global_round)
         return model.state_dict(), sum(epoch_loss) / len(epoch_loss)
 
-    def inference(self, model):
-        """ Returns the inference loss.
-        """
+    def inference(self, model, val_idxs):
+        """ Returns the inference loss. """
         model.eval()
-        inf_losses = []
 
-        for batch_idx, (images, labels) in enumerate(self.validloader):
-            images, targets = torch.tensor(images), torch.tensor(targets)
-            images, targets = images, targets.float()
-            images, targets = images.to(self.device), targets.to(self.device)
+        inf_losses = []
+        for val_idx in val_idxs:
+            loss = 0
+            image, target = self.dataset.load_x(val_idx), self.dataset.load_y(val_idx)
+            image, target = np.moveaxis(np.array([image]), -1, 0), np.moveaxis(np.array([target]), -1, 0)
+            image, target = torch.tensor(image), torch.tensor(target).float()
+            for batch_no in range(image.shape[0] // self.args.local_bs):
+                batch_image = image[batch_no * self.args.local_bs: (batch_no + 1) * self.args.local_bs].to(self.device)
+                batch_target = target[batch_no * self.args.local_bs: (batch_no + 1) * self.args.local_bs].to(self.device)
+
+                with torch.no_grad():
+                    outputs = model(batch_image)
+                    loss += self.criterion(outputs, batch_target).item()
+                del batch_image, batch_target, outputs
+                torch.cuda.empty_cache()
 
             # Inference
-            outputs = model(images)
-            batch_loss = self.criterion(outputs, labels)
-            inf_losses.append(batch_loss.item())
+            inf_losses.append(loss / image.shape[0])
 
         return sum(inf_losses) / len(inf_losses)

@@ -7,3 +7,4 @@ __pycache__/*
 */.idea
 */*/.idea
 FederatedUNet/runs
+notebooks/.ipynb_checkpoints
