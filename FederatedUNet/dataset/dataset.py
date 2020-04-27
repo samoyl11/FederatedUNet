@@ -38,3 +38,6 @@ class FederatedDataset(CSV):
 
     def class_name(self):
         return self._class_name
+
+    def get_file_name(self, _id):
+        return self.df_meta.iloc[_id][self.img_col]

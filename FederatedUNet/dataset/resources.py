@@ -9,8 +9,16 @@ def get_datasets():
     datasets = []
     meta_folder = '/nmnt/media/home/alex_samoylenko/Federated/FederatedUNet/FederatedUNet/dataset/metas'
     for meta_path in os.listdir(meta_folder):
-        dataset = cache_methods(FederatedDataset(os.path.join(meta_folder, meta_path)), methods=['load_x', 'load_y', 'len', 'class_name'])
+        dataset = cache_methods(FederatedDataset(os.path.join(meta_folder, meta_path)), methods=['load_x', 'load_y', 'len',
+                                                                                                 'class_name', 'get_file_name'])
         datasets.append(dataset)
+    return datasets
+
+def get_dataset():
+    datasets = []
+    meta_name = '/nmnt/media/home/alex_samoylenko/Federated/FederatedUNet/FederatedUNet/dataset/meta.csv'
+    dataset = cache_methods(FederatedDataset(meta_name), methods=['load_x', 'load_y', 'len', 'class_name', 'get_file_name'])
+    datasets.append(dataset)
     return datasets
 
 
@@ -21,7 +29,7 @@ def get_random_idxs(datasets):
         shuffle(idxs)
         train_idx.append(idxs[:int(0.8 * dataset.len())])
         valid_idx.append(idxs[int(0.8 * dataset.len()):int(0.9 * dataset.len())])
-        test_idx.append(idxs[int(0.8 * dataset.len()):int(0.9 * dataset.len())])
+        test_idx.append(idxs[int(0.9 * dataset.len()):])
     return train_idx, valid_idx, test_idx
 
 

@@ -7,7 +7,7 @@ import ast
 import sys
 sys.path.append('/nmnt/media/home/alex_samoylenko/Federated/FederatedUNet')
 
-from FederatedUNet.dataset.resources import get_datasets, get_random_idxs
+from FederatedUNet.dataset.resources import get_datasets, get_random_idxs, get_dataset
 from FederatedUNet.model.model import UNet
 from FederatedUNet.updateWeights.update import LocalUpdate, average_weights
 from FederatedUNet.utils import train_parse_args, LrPolicy
@@ -24,7 +24,10 @@ def main():
     lr_policy = LrPolicy(init_lr=args.lr, policy=policy)
 
     # load datasets
-    datasets = get_datasets()
+    if args.federated:
+        datasets = get_datasets()
+    else:
+        datasets = get_dataset()
     train_idxs, valid_idxs, test_idxs = get_random_idxs(datasets)
 
     # BUILD MODEL
@@ -51,7 +54,8 @@ def main():
             local_weights.append(copy.deepcopy(w))
             local_train_losses_global_round.append(copy.deepcopy(loss))
         writer.add_scalars('Global round train losses',
-                           {datasets[i].class_name(): local_train_losses_global_round[i] for i in range(len(local_train_losses_global_round))})
+                           {datasets[i].class_name(): local_train_losses_global_round[i] for i in range(len(local_train_losses_global_round))},
+                           global_step=global_round)
         # update global weights
         global_weights = average_weights(local_weights)
 
@@ -64,12 +68,14 @@ def main():
 
         # Calculate valid loss
         global_model.eval()
-        for ds_num, dataset in enumerate(datasets):
-            local_model = LocalUpdate(dataset=dataset, writer=writer, args=args)
-            loss = local_model.inference(model=global_model, val_idxs=valid_idxs[ds_num])
-            local_val_losses_global_round.append(loss)
-        writer.add_scalars('Global round val losses',
-                           {datasets[i].class_name(): local_val_losses_global_round[i] for i in range(len(local_val_losses_global_round))})
+        if global_round % args.show_every == 0:
+            for ds_num, dataset in enumerate(datasets):
+                local_model = LocalUpdate(dataset=dataset, writer=writer, args=args)
+                loss = local_model.inference(model=global_model, val_idxs=valid_idxs[ds_num])
+                local_val_losses_global_round.append(loss)
+            writer.add_scalars('Global round val losses',
+                               {datasets[i].class_name(): local_val_losses_global_round[i] for i in range(len(local_val_losses_global_round))},
+                               global_step=global_round)
 
     # Save train/valid/test idxs
     with open(os.path.join(args.exp_path, args.exp_name, 'IDX'), 'w') as f:
