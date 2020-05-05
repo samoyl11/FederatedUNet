@@ -8,7 +8,7 @@ def train_parse_args():
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--local_epochs', type=int, default=8)
     parser.add_argument('--local_bs', type=int, default=6)
-    parser.add_argument('--policy', default="{30: 0.5, 60: 0.5, 90: 0.5, 120: 0.5, 150: 0.25, 175: 0.25}")  # {5: 0.5, 10: 0.5, 15: 0.5, 20: 0.5, 23: 0.25, 26: 0.25}
+    parser.add_argument('--policy', default="{50: 0.5, 100: 0.5, 150: 0.5, 200: 0.1, 250: 0.1}")  # {5: 0.5, 10: 0.5, 15: 0.5, 20: 0.5, 23: 0.25, 26: 0.25}
     parser.add_argument('--exp_path', default='/nmnt/media/home/alex_samoylenko/experiments/Federated')
     parser.add_argument('--exp_name')
     # parser.add_argument('--device', type=int, default=0)
@@ -26,6 +26,7 @@ def inf_parse_args():
     parser.add_argument('--exp_name')
     parser.add_argument('--bs', type=int, default=20)
     parser.add_argument('--pred_save_path', default='/nmnt/x3-hdd/data/Federated')
+    parser.add_argument('--federated', type=int, default=1)
     # parser.add_argument('--device', type=int, default=0)
 
     args = parser.parse_args()
