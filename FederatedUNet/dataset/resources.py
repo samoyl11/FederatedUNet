@@ -20,6 +20,11 @@ def get_dataset(domain_name):
     dataset = cache_methods(FederatedDataset(meta_name), methods=['load_x', 'load_y', 'len', 'class_name', 'get_file_name'])
     return dataset
 
+def get_full_dataset():
+    full_meta_path = '/nmnt/media/home/alex_samoylenko/Federated/FederatedUNet/FederatedUNet/dataset/meta.csv'
+    dataset = cache_methods(FederatedDataset(full_meta_path), methods=['load_x', 'load_y', 'len', 'class_name', 'get_file_name'])
+    return dataset
+
 
 def get_train_val_test_idx(dataset):
     idx = list(range(dataset.len()))
