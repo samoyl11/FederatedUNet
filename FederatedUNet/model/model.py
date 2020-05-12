@@ -1,7 +1,7 @@
 import torch.nn as nn
 import sys
 sys.path.append('/nmnt/media/home/alex_samoylenko/Federated/FederatedUNet')
-from .unet_parts import *
+from FederatedUNet.model.unet_parts import *
 
 
 class UNet(nn.Module):

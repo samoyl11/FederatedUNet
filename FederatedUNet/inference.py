@@ -3,11 +3,9 @@ import os
 import ast
 import numpy as np
 
-# import sys
-# sys.path.insert(1, '/nmnt/media/home/alex_samoylenko/Federated/FederatedUNet')
-from utils import inf_parse_args
-from model.model import UNet
-from dataset.resources import get_dataset, get_datasets
+from FederatedUNet.utils import inf_parse_args
+from FederatedUNet.model.model import UNet
+from FederatedUNet.dataset.resources import get_dataset, get_datasets
 
 
 def main():

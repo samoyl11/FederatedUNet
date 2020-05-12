@@ -3,88 +3,110 @@ from tqdm import tqdm
 import torch
 from torch.utils.tensorboard import SummaryWriter
 import os
-import ast
-import sys
-sys.path.append('/nmnt/media/home/alex_samoylenko/Federated/FederatedUNet')
+import socket
+import numpy as np
+import pickle
+from _thread import start_new_thread
+from threading import Lock
 
-from FederatedUNet.dataset.resources import get_datasets, get_random_idxs, get_dataset
 from FederatedUNet.model.model import UNet
-from FederatedUNet.updateWeights.update import LocalUpdate, average_weights
-from FederatedUNet.utils import train_parse_args, LrPolicy
-
+from FederatedUNet.updateWeights.update import LocalUpdate, average_weights, weighted_average
+from FederatedUNet.utils import aggregation_server_parse_args, LrPolicy, send_weights, recv_model_weights, recv_weights, send_meta
 
 def main():
-    args = train_parse_args()
-    writer = SummaryWriter(os.path.join(args.exp_path, args.exp_name))
-    torch.cuda.set_device(0)
-    device = 'cuda'
-
-    # learning rate policy
-    policy = ast.literal_eval(args.policy)
-    lr_policy = LrPolicy(init_lr=args.lr, policy=policy)
-
-    # load datasets
-    if args.federated:
-        datasets = get_datasets()
-    else:
-        datasets = get_dataset()
-    train_idxs, valid_idxs, test_idxs = get_random_idxs(datasets)
-
-    # BUILD MODEL
+    args = aggregation_server_parse_args()
+    writer = SummaryWriter(os.path.join(args.exp_path, args.exp_name, 'aggregation'))
+    socket_lock = Lock()
+    #### build model ####
     global_model = UNet(n_channels=1, n_classes=1).float()
-
-    # Set the model to train and send it to device.
-    global_model.to(device)
-
-    # weights
     global_weights = global_model.state_dict()
 
-    # Training
+    sock_send = socket.socket()
+    sock_send.bind(('', args.send_port))
+    sock_send.listen(args.domains)
+
+    sock_recv = socket.socket()
+    sock_recv.bind(('', args.recv_port))
+    sock_recv.listen(args.domains)
+
+    sock_meta= socket.socket()
+    sock_meta.bind(('', args.meta_port))
+    sock_meta.listen(args.domains)
+
+    meta_cnt = 0
+    while meta_cnt < args.domains:
+        conn, _ = sock_meta.accept()
+        meta_cnt += 1
+        # Start a new thread to send weights
+        socket_lock.acquire()
+        start_new_thread(send_meta, (conn, args, socket_lock))
+    sock_meta.close()
+    socket_lock.acquire()
+    #### wait until sending is complete
+    socket_lock.release()
+
+    #### Training ####
     for global_round in tqdm(range(args.global_rounds)):
-        local_weights, local_train_losses_global_round, local_val_losses_global_round = [], [], []
-        print(f'\n | Global Training Round : {global_round+1} |\n')
+        print(f'\n | Global Training Round : {global_round + 1} |\n')
+        send_cnt = 0
+        weights_cnt = 0
+        recv_cnt = 0
+        local_model_weights_dict = dict()
+        weights_dict = dict()
 
-        global_model.train()
-        for ds_num, dataset in enumerate(datasets):
-            local_model = LocalUpdate(dataset=dataset, writer=writer, args=args)
-            w, loss = local_model.train(model=global_model,
-                                        train_idxs=train_idxs[ds_num],
-                                        local_lr=lr_policy.lr,
-                                        global_round=global_round)
-            local_weights.append(copy.deepcopy(w))
-            local_train_losses_global_round.append(copy.deepcopy(loss))
-        writer.add_scalars('Global round train losses',
-                           {datasets[i].class_name(): local_train_losses_global_round[i] for i in range(len(local_train_losses_global_round))},
-                           global_step=global_round)
-        # update global weights
-        global_weights = average_weights(local_weights)
+        #### model weights to binary ####
+        pickled_weights = pickle.dumps(global_weights)
 
-        # update global weights
+        #### send weights to data servers ####
+        while send_cnt < args.domains:
+            conn, _ = sock_send.accept()
+            send_cnt += 1
+            # Start a new thread to send weights
+            socket_lock.acquire()
+            start_new_thread(send_weights, (conn, copy.deepcopy(pickled_weights), socket_lock))
+
+        socket_lock.acquire()
+        #### wait until sending is complete
+        socket_lock.release()
+
+        #### receive averaging weights from data servers ####
+        if args.weighted:
+            if global_round > 0:
+                while weights_cnt < args.domains:
+                    conn, _ = sock_recv.accept()
+                    weights_cnt += 1
+                    # Start a new thread to send weights
+                    socket_lock.acquire()
+                    start_new_thread(recv_weights, (conn, weights_dict, socket_lock))
+
+        #### receive model weights from data servers ####
+
+        while recv_cnt < args.domains:
+            conn, _ = sock_recv.accept()
+            recv_cnt += 1
+            # Start a new thread to send weights
+            socket_lock.acquire()
+            start_new_thread(recv_model_weights, (conn, local_model_weights_dict, socket_lock))
+
+        #### update global weights ####
+        socket_lock.acquire()
+        if args.weighted:
+            if global_round > 0:
+                sum_losses = sum(weights_dict.values())
+                for key in weights_dict:
+                    weights_dict[key] /= sum_losses
+                print('weights: ', weights_dict)
+                global_weights = weighted_average(local_model_weights_dict, weights_dict)
+            else:
+                global_weights = average_weights(local_model_weights_dict)
+        else:
+            global_weights = average_weights(local_model_weights_dict)
+
         global_model.load_state_dict(global_weights)
+        socket_lock.release()
 
-        # Lr step
-        writer.add_scalar('Learning rate', lr_policy.lr, global_step=global_round)
-        lr_policy.step()
-
-        # Calculate valid loss
-        global_model.eval()
-        if global_round % args.show_every == 0:
-            for ds_num, dataset in enumerate(datasets):
-                local_model = LocalUpdate(dataset=dataset, writer=writer, args=args)
-                loss = local_model.inference(model=global_model, val_idxs=valid_idxs[ds_num])
-                local_val_losses_global_round.append(loss)
-            writer.add_scalars('Global round val losses',
-                               {datasets[i].class_name(): local_val_losses_global_round[i] for i in range(len(local_val_losses_global_round))},
-                               global_step=global_round)
-
-    # Save train/valid/test idxs
-    with open(os.path.join(args.exp_path, args.exp_name, 'IDX'), 'w') as f:
-        for class_num in range(len(datasets)):
-            f.write(datasets[class_num].class_name() + '\n')  # class name
-            f.write(str(train_idxs[class_num]) + '\n')
-            f.write(str(valid_idxs[class_num]) + '\n')
-            f.write(str(test_idxs[class_num]) + '\n\n')
-        f.write(str(vars(args)))
+    sock_recv.close()
+    sock_send.close()
     # Save model
     torch.save(global_model.state_dict(), os.path.join(args.exp_path, args.exp_name, 'model.pth'))
 

@@ -1,15 +1,6 @@
 from matplotlib import pyplot as plt
 import torch
-import numpy as np
 import copy
-
-def img_target_show(img, target):
-    plt.figure(figsize=(16, 8))
-    plt.subplot(121)
-    plt.imshow(img, cmap='Greys')
-    plt.subplot(122)
-    plt.imshow(target)
-
 
 def visualize_preds(img, pred, target):
     fig = plt.figure(figsize=(12, 4))
@@ -21,14 +12,28 @@ def visualize_preds(img, pred, target):
     plt.imshow(target)
     return fig
 
-
-def average_weights(w):
+def average_weights(model_weights_dict):
     """
     Returns the average of the weights.
     """
-    w_avg = copy.deepcopy(w[0])
+    keys = list(model_weights_dict.keys())
+    w_avg = copy.deepcopy(model_weights_dict[keys[0]])
+
     for key in w_avg.keys():
-        for i in range(1, len(w)):
-            w_avg[key] += w[i][key]
-        w_avg[key] = torch.div(w_avg[key], len(w))
+        for i in range(1, len(keys)):
+            w_avg[key] += model_weights_dict[keys[i]][key]
+        w_avg[key] = torch.div(w_avg[key], len(keys))
+    return w_avg
+
+def weighted_average(model_weights_dict, weights_dict):
+
+    keys = list(model_weights_dict.keys())
+    w_avg = copy.deepcopy(model_weights_dict[keys[0]])
+
+    for key in w_avg.keys():
+        w_avg[key] = 0
+
+    for key in w_avg.keys():
+        for i in range(len(keys)):
+            w_avg[key] += torch.mul(model_weights_dict[keys[i]][key], weights_dict[keys[i]])
     return w_avg

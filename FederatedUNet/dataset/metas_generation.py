@@ -1,7 +1,6 @@
 import pandas as pd
 import os
 import argparse
-import numpy as np
 
 def main():
     parser = argparse.ArgumentParser()

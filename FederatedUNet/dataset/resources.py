@@ -1,35 +1,32 @@
-from .dataset import FederatedDataset
+from FederatedUNet.dataset.dataset import FederatedDataset
 import os
 from dpipe.dataset.wrappers import cache_methods
 from numpy.random import shuffle
 import numpy as np
 
+meta_folder = '/nmnt/media/home/alex_samoylenko/Federated/FederatedUNet/FederatedUNet/dataset/metas'
 
 def get_datasets():
     datasets = []
-    meta_folder = '/nmnt/media/home/alex_samoylenko/Federated/FederatedUNet/FederatedUNet/dataset/metas'
     for meta_path in os.listdir(meta_folder):
         dataset = cache_methods(FederatedDataset(os.path.join(meta_folder, meta_path)), methods=['load_x', 'load_y', 'len',
                                                                                                  'class_name', 'get_file_name'])
         datasets.append(dataset)
     return datasets
 
-def get_dataset():
-    datasets = []
-    meta_name = '/nmnt/media/home/alex_samoylenko/Federated/FederatedUNet/FederatedUNet/dataset/meta.csv'
+
+def get_dataset(domain_name):
+    meta_name = os.path.join(meta_folder, f'meta_{domain_name}.csv')
     dataset = cache_methods(FederatedDataset(meta_name), methods=['load_x', 'load_y', 'len', 'class_name', 'get_file_name'])
-    datasets.append(dataset)
-    return datasets
+    return dataset
 
 
-def get_random_idxs(datasets):
-    train_idx, valid_idx, test_idx = [], [], []
-    for dataset in datasets:
-        idxs = list(range(dataset.len()))
-        shuffle(idxs)
-        train_idx.append(idxs[:int(0.8 * dataset.len())])
-        valid_idx.append(idxs[int(0.8 * dataset.len()):int(0.9 * dataset.len())])
-        test_idx.append(idxs[int(0.9 * dataset.len()):])
+def get_train_val_test_idx(dataset):
+    idx = list(range(dataset.len()))
+    shuffle(idx)
+    train_idx = idx[:int(0.8 * dataset.len())]
+    valid_idx = idx[int(0.8 * dataset.len()):int(0.9 * dataset.len())]
+    test_idx = idx[int(0.9 * dataset.len()):]
     return train_idx, valid_idx, test_idx
 
 
